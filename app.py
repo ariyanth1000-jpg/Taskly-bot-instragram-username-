@@ -1,8 +1,10 @@
-# Version 3.7 - (Based on 3.5) + "Successful ❤️" shows in main display
+# Version 3.7 - Render Deployment Ready
 
 import asyncio
 import re
 import os
+import threading
+import time
 from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify
 from telethon import TelegramClient, events
@@ -55,11 +57,9 @@ async def on_bot_reply(event):
                 display_text = line.strip()
                 break
                 
-        # 'Press the button' মেসেজ আসলে ডিসপ্লেতে Successful দেখাবে
         if "Press the button" in text:
             latest_message = "Submit Done ✅"
         else:
-            # অন্যথায় মেইন ডিসপ্লেতে মেসেজ দেখাবে
             latest_message = display_text
             
         is_waiting_for_report = False 
@@ -118,12 +118,11 @@ HTML_PAGE = '''
         }
         .live-display h4 { margin: 0 0 10px 0; font-size: 14px; color: #1565c0; text-transform: uppercase; letter-spacing: 1px;}
         
-        /* লেখা ডিসপ্লে (Successful এলে সবুজ হবে) */
         .live-value { 
             font-size: 20px; font-weight: bold; color: #d32f2f; white-space: nowrap; overflow: hidden; 
             text-overflow: ellipsis; cursor: pointer; padding: 5px 10px; border-radius: 5px; transition: background 0.2s, color 0.2s; width: 100%; box-sizing: border-box;
         }
-        .live-value.success-text { color: #2e7d32; } /* সবুজ রঙ */
+        .live-value.success-text { color: #2e7d32; }
         
         .live-value:hover { background: rgba(255,255,255,0.6); }
         .copied-msg { font-size: 12px; color: #28a745; font-weight: bold; display: none; margin-top: 5px; }
@@ -204,8 +203,7 @@ HTML_PAGE = '''
                     display.innerText = lastLoginVal;
                     display.title = lastLoginVal;
                     
-                    // যদি Successful আসে, তবে সবুজ রঙ হবে
-                    if (lastLoginVal.includes("Successful")) {
+                    if (lastLoginVal.includes("Submit Done")) {
                         display.classList.add('success-text');
                         display.classList.add('pulse');
                         setTimeout(() => display.classList.remove('pulse'), 2000);
@@ -429,8 +427,27 @@ def send_2fa():
     success = client.loop.run_until_complete(send_action())
     return jsonify({'status': 'ok' if success else 'error'})
 
+
+# ==========================================
+# Render-এর জন্য সঠিক স্টার্টআপ ব্লক
+# ==========================================
+def start_telegram_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # Render-এ সরাসরি connect() করতে হবে
+    loop.run_until_complete(client.connect())
+    print("Telegram Connected!")
+    loop.run_until_complete(client.run_until_disconnected())
+
 if __name__ == '__main__':
     print("Connecting..")
-    client.start()
+    # টেলিগ্রামকে ব্যাকগ্রাউন্ড থ্রেডে চালানো হচ্ছে
+    t = threading.Thread(target=start_telegram_bot, daemon=True)
+    t.start()
+    
+    time.sleep(3) # কানেক্ট হওয়ার জন্য অপেক্ষা
+
     print("Success! Website running...")
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=False, use_reloader=False)
+    # Render-এর ডাইনামিক পোর্ট নেওয়া হচ্ছে
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True, use_reloader=False)
