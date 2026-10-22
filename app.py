@@ -10,7 +10,7 @@ from telethon.sessions import StringSession
 
 app = Flask(__name__)
 
-# Render Environment Variables থেকে ডেটা নেওয়া
+# Render Environment Variables থেকে ডেটা নেওয়া
 api_id = int(os.environ.get('API_ID', 0))
 api_hash = os.environ.get('API_HASH', '')
 session_str = os.environ.get('SESSION_STR', '')
@@ -47,7 +47,7 @@ async def on_bot_reply(event):
             is_waiting_for_report = False
             return 
 
-    # ২. রিপোর্ট চেক (যদি অপেক্ষায় থাকি)
+    # ২. রিপোর্ট চেক (যদি অপেক্ষায় থাকি)
     if is_waiting_for_report:
         display_text = lines[0].strip()
         for line in lines:
@@ -59,7 +59,7 @@ async def on_bot_reply(event):
         if "Press the button" in text:
             latest_message = "Submit Done ✅"
         else:
-            # অন্যথায় মেইন ডিসপ্লেতে মেসেজ দেখাবে
+            # অন্যথায় মেইন ডিসপ্লেতে মেসেজ দেখাবে
             latest_message = display_text
             
         is_waiting_for_report = False 
@@ -259,13 +259,13 @@ HTML_PAGE = '''
                 btnAll2FA.innerText = `🚀 Processing... ${item.percent}%`;
                 
                 if (i < buttons.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));   // ⏱️ MARK-E (আগে 3000ms) → এখন 1000ms
                 }
             }
 
             if (with2FA) {
                 btnAll2FA.innerText = `🚀 Get Instragram Username... (100%)`;
-                await new Promise(resolve => setTimeout(resolve, 3000)); 
+                await new Promise(resolve => setTimeout(resolve, 1000));       // ⏱️ MARK-F (আগে 3000ms) → এখন 1000ms
                 try {
                     await fetch('/send_2fa', { method: 'POST' });
                 } catch(e) {}
@@ -292,7 +292,7 @@ HTML_PAGE = '''
                 });
             } catch (e) {}
 
-            let timeLeft = 5;
+            let timeLeft = 2;                  // ⏱️ MARK-C (আগে 5) → এখন 2
             btn.innerText = `Wait ${timeLeft}s`;
 
             const countdownInterval = setInterval(() => {
@@ -304,7 +304,7 @@ HTML_PAGE = '''
                     btn.disabled = false;
                     btn.innerText = "Send";
                 }
-            }, 1000);
+            }, 500);                           // ⏱️ MARK-D (আগে 1000ms) → এখন 500ms
         }
 
         async function sendManualMsg() {
@@ -329,7 +329,7 @@ HTML_PAGE = '''
                 });
                 input.value = ''; 
 
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                await new Promise(resolve => setTimeout(resolve, 1000));       // ⏱️ MARK-G (আগে 3000ms) → এখন 1000ms
                 await fetch('/send_manual_registered', { method: 'POST' });
 
             } catch (e) {}
@@ -337,7 +337,7 @@ HTML_PAGE = '''
             setTimeout(() => {
                 btn.disabled = false;
                 btn.innerText = "Submit Now";
-            }, 6000);
+            }, 2500);                                                          // ⏱️ MARK-H (আগে 6000ms) → এখন 2500ms
         }
     </script>
 </body>
@@ -368,10 +368,10 @@ def click_button_by_text():
         try:
             if is_start:
                 await client.send_message(TARGET_BOT, "/start")
-                await asyncio.sleep(2) 
+                await asyncio.sleep(0.7)              # ⏱️ MARK-A (আগে 2) → এখন 0.7
             
             result = await find_and_click_button(btn_text)
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.7)                  # ⏱️ MARK-B (আগে 2) → এখন 0.7
             return result
         except Exception as e:
             return False
