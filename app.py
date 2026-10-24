@@ -337,22 +337,22 @@ HTML_PAGE = '''
 
     <!-- News Ticker -->
     <div class="news-ticker">
-        <div class="ticker-text">📢 নির্দেশনা:কাজ শুরু করার পূর্বে ও শেষ করার পরে অবশ্যই গ্রুপে জানাবেন, যাতে অন্যরাও কাজ করার সুযোগ পায়। কাজ শুরু বা শেষ এটা কনফার্ম করুন। অন্যথায় কাজের রিপোর্ট গ্রহণযোগ্য হবে না।🚨</div>
+        <div class="ticker-text">📢 নির্দেশনা:কাজ শুরু করার পূর্বে ও শেষ করার পরে অবশ্যই গ্রুপে জানাবেন, যাতে অন্যরাও কাজ করার সুযোগ পায়। অবশ্যই ৬+ Follow  দিতে হবে। অন্যথায় কাজের রিপোর্ট গ্রহণযোগ্য হবে না।🚨</div>
     </div>
 
     <div class="live-display">
-        <h4>Trending Academy Limited</h4>
+        <h4>💗⃝🌕 Trending Academy Limited <❀࿐/h4>
         
         <!-- Welcome Message -->
         <div id="welcomeMsg" class="welcome-msg">
-            🌐 Welcome to Live Projects 🟢
-            <span>CEO: MD. TAMIM</span>
+            🖥️ Welcome to Live Projects 🗃️
+            <span>💕⃝🕊️CEO: MD. TAMIM 🥀</span>
         </div>
 
         <!-- Professional Loader -->
         <div id="loader" class="loader-container">
             <div class="premium-spinner"></div>
-            <div class="loader-text">Seven Plus Follow Must</div>
+            <div class="loader-text">☑ 06+ Follow Must 💗</div>
         </div>
 
         <div class="live-value" id="loginDisplay" onclick="copyToClipboard()"></div>
