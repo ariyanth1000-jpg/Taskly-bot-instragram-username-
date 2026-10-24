@@ -1,4 +1,4 @@
-# Version 4.6 - Welcome Text + Full Width Display + Delayed Submit Success
+# Version 4.8 - Added Auto Message + Professional Loader (Full Code)
 
 import asyncio
 import re
@@ -198,12 +198,19 @@ HTML_PAGE = '''
             text-overflow: ellipsis;
         }
         
-        /* Spinner Animation */
-        .spinner {
-            width: 35px; height: 35px; border: 4px solid rgba(21, 101, 192, 0.2); border-top: 4px solid #1565c0;
-            border-radius: 50%; animation: spin 1s linear infinite; display: none;
+        /* Professional Loader */
+        .loader-container {
+            display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+        }
+        .premium-spinner {
+            width: 35px; height: 35px; border: 3px solid rgba(21, 101, 192, 0.15); 
+            border-top: 3px solid #1565c0; border-right: 3px solid #1565c0;
+            border-radius: 50%; animation: spin 0.8s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+            box-shadow: 0 0 10px rgba(21, 101, 192, 0.2);
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .loader-text { font-size: 13px; font-weight: bold; color: #1565c0; letter-spacing: 1px; text-transform: uppercase; animation: pulseText 1.5s infinite; }
+        @keyframes pulseText { 0% { opacity: 0.7; } 50% { opacity: 1; } 100% { opacity: 0.7; } }
 
         /* Welcome Message */
         .welcome-msg {
@@ -342,7 +349,12 @@ HTML_PAGE = '''
             <span>CEO: MD. TAMIM</span>
         </div>
 
-        <div id="loader" class="spinner"></div>
+        <!-- Professional Loader -->
+        <div id="loader" class="loader-container">
+            <div class="premium-spinner"></div>
+            <div class="loader-text">Seven Plus Follow Must</div>
+        </div>
+
         <div class="live-value" id="loginDisplay" onclick="copyToClipboard()"></div>
         <div class="copied-msg" id="copyMsg">✔ Copied </div>
     </div>
@@ -437,7 +449,7 @@ HTML_PAGE = '''
         let autoRefreshTimer = null;
         let isFetchingReports = false;
         let isLocked = false;
-        let isManualSubmitting = false; // To control submit message delay
+        let isManualSubmitting = false; 
 
         function initLock() {
             isLocked = localStorage.getItem('dateFilterLocked') === 'true';
@@ -485,7 +497,6 @@ HTML_PAGE = '''
                 const res = await fetch('/get_login');
                 const data = await res.json();
                 
-                // Ignore success message if we are manually holding it for delay
                 if (isManualSubmitting && (data.login === "Submit Done ✅" || data.login === "Submit Done")) {
                     return;
                 }
@@ -499,7 +510,7 @@ HTML_PAGE = '''
 
                     if (lastLoginVal === "Loading..." || lastLoginVal === "Processing..." || lastLoginVal.includes("Creating")) {
                         welcome.style.display = 'none';
-                        loader.style.display = 'block';
+                        loader.style.display = 'flex';
                         display.style.display = 'none';
                     } else if (lastLoginVal === "Welcome") {
                         welcome.style.display = 'block';
@@ -508,7 +519,7 @@ HTML_PAGE = '''
                     } else {
                         welcome.style.display = 'none';
                         loader.style.display = 'none';
-                        display.style.display = 'block'; // block for full width box
+                        display.style.display = 'block';
                         display.innerText = lastLoginVal; 
                         display.title = lastLoginVal;
                         
@@ -541,7 +552,7 @@ HTML_PAGE = '''
             
             document.getElementById('welcomeMsg').style.display = 'none';
             document.getElementById('loginDisplay').style.display = 'none';
-            document.getElementById('loader').style.display = 'block';
+            document.getElementById('loader').style.display = 'flex';
             lastLoginVal = "Loading...";
             
             const originalText = "Get Username";
@@ -578,7 +589,7 @@ HTML_PAGE = '''
             
             document.getElementById('welcomeMsg').style.display = 'none';
             document.getElementById('loginDisplay').style.display = 'none';
-            document.getElementById('loader').style.display = 'block';
+            document.getElementById('loader').style.display = 'flex';
             lastLoginVal = "Loading...";
             
             try {
@@ -603,13 +614,13 @@ HTML_PAGE = '''
             const text = input.value.trim();
             if(!text || btn.disabled) return;
             
-            isManualSubmitting = true; // Start holding the success message
+            isManualSubmitting = true; 
             btn.disabled = true;
             btn.innerText = "Processing..";
             
             document.getElementById('welcomeMsg').style.display = 'none';
             document.getElementById('loginDisplay').style.display = 'none';
-            document.getElementById('loader').style.display = 'block';
+            document.getElementById('loader').style.display = 'flex';
             lastLoginVal = "Loading...";
             
             try {
@@ -623,12 +634,9 @@ HTML_PAGE = '''
                 await fetch('/send_manual_registered', { method: 'POST' });
             } catch (e) {}
             
-            // Wait 3 seconds while button is disabled
             setTimeout(() => {
                 btn.disabled = false;
-                btn.innerText = "Submit Now"; // Button is now blue (enabled) again
-                
-                // Now show the success message
+                btn.innerText = "Submit Now"; 
                 isManualSubmitting = false;
                 showSuccessAndRevert();
             }, 3000);
@@ -646,14 +654,11 @@ HTML_PAGE = '''
             display.classList.add('success-text');
             lastLoginVal = "Submit Done ✅";
 
-            // After exactly 5 seconds, revert to Welcome
             setTimeout(async () => {
                 welcome.style.display = 'block';
                 display.style.display = 'none';
                 display.classList.remove('success-text');
                 lastLoginVal = "Welcome";
-                
-                // Tell backend to reset the message so polling doesn't re-trigger it
                 try { await fetch('/reset_welcome', { method: 'POST' }); } catch(e) {}
             }, 5000);
         }
@@ -945,7 +950,11 @@ def send_manual_registered():
 
     async def send_action():
         try:
+            # ১. একাউন্ট রেজিস্টার্ড মেসেজ
             await client.send_message(TARGET_BOT, "✅ Account registered")
+            # ২. ২ সেকেন্ড পর নতুন মেসেজ (5+ subscriptions)
+            await asyncio.sleep(2)
+            await client.send_message(TARGET_BOT, "✅ Yes, I made 5+ subscriptions")
             return True
         except Exception:
             return False
