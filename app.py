@@ -1,9 +1,10 @@
-# Version 5.0 - Simple + Load Free (No Report Section)
+# Version 4.9 - Original code + Deadlock Fix (সম্পূর্ণ কাজ করবে)
 
 import asyncio
 import re
 import os
 import threading
+from datetime import datetime, timezone
 from flask import Flask, render_template_string, request, jsonify
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -24,11 +25,17 @@ is_username_shown = False
 is_waiting_for_report = False
 
 # ==========================================
-# FIX: Single Event Loop + Lock (deadlock প্রতিরোধ)
+# রিপোর্ট ক্যাশ সিস্টেম
+# ==========================================
+report_cache = []
+last_synced_id = 0
+is_syncing = False
+
+# ==========================================
+# ✅ FIX: Single Event Loop + Lock
 # ==========================================
 _tg_lock = threading.Lock()
 _loop = None
-_loop_thread = None
 
 def _start_event_loop():
     global _loop
@@ -37,12 +44,11 @@ def _start_event_loop():
     _loop.run_forever()
 
 def start_loop():
-    global _loop_thread
-    _loop_thread = threading.Thread(target=_start_event_loop, daemon=True)
-    _loop_thread.start()
+    t = threading.Thread(target=_start_event_loop, daemon=True)
+    t.start()
 
-def run_async(coro, timeout=20):
-    """Thread-safe, timeout সহ coroutine চালায়। কখনো hang করবে না।"""
+def run_async(coro, timeout=25):
+    """Thread-safe, timeout সহ। কখনো hang হবে না।"""
     if _loop is None:
         return None
     with _tg_lock:
@@ -55,6 +61,50 @@ def run_async(coro, timeout=20):
         except Exception as e:
             print(f"[run_async] {e}")
             return None
+
+async def sync_reports_from_telegram():
+    global report_cache, last_synced_id, is_syncing
+    if is_syncing:
+        return
+    is_syncing = True
+
+    try:
+        kwargs = {'limit': None}
+        if last_synced_id > 0:
+            kwargs['min_id'] = last_synced_id
+
+        new_messages = []
+        async for msg in client.iter_messages(TARGET_BOT, **kwargs):
+            new_messages.append(msg)
+
+        for msg in new_messages:
+            text = msg.text or ""
+            if not text:
+                continue
+
+            ds_cnt = text.count("ds_user_id")
+            ap_cnt = len(re.findall(r'report approved', text, re.IGNORECASE))
+            rj_cnt = len(re.findall(r'report rejected', text, re.IGNORECASE))
+
+            if ds_cnt > 0 or ap_cnt > 0 or rj_cnt > 0:
+                report_cache.append({
+                    'id': msg.id,
+                    'date': msg.date,
+                    'text': text,
+                    'ds_cnt': ds_cnt,
+                    'ap_cnt': ap_cnt,
+                    'rj_cnt': rj_cnt
+                })
+
+            if msg.id > last_synced_id:
+                last_synced_id = msg.id
+
+        report_cache.sort(key=lambda x: x['date'], reverse=True)
+
+    except Exception as e:
+        print(f"Sync Error: {e}")
+    finally:
+        is_syncing = False
 
 # ==========================================
 # টেলিগ্রাম লিসেনার
@@ -126,7 +176,7 @@ async def find_and_click_button(btn_text):
         return False
 
 # ==========================================
-# HTML (শুধু উপরের অংশ)
+# HTML (আগের মতোই হুবহু)
 # ==========================================
 HTML_PAGE = '''
 <!DOCTYPE html>
@@ -172,7 +222,6 @@ HTML_PAGE = '''
             overflow: hidden;
             text-overflow: ellipsis;
         }
-
         .loader-container {
             display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
         }
@@ -232,6 +281,66 @@ HTML_PAGE = '''
         .manual-send-btn { background: #43a047; color: white; border: none; padding: 15px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 18px; width: 100%; transition: 0.2s; box-shadow: 0 4px 6px rgba(67, 160, 71, 0.3);}
         .manual-send-btn:hover { background: #2e7d32; }
         .manual-send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+        .report-area { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 6px 18px rgba(0,0,0,0.08); border: 2px solid #90caf9; }
+        .report-area > h4 { margin: 0 0 15px 0; font-size: 18px; color: #1565c0; text-align: center; letter-spacing: 0.5px; }
+
+        .filter-area { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; background:#f5f9ff; padding: 15px; border-radius: 8px; }
+        .filter-group { display: flex; flex-direction: column; gap: 5px; width: 100%; }
+        .filter-group label { font-weight: bold; color: #444; font-size: 13px; }
+        .filter-group input { padding: 12px 15px; border: 1px solid #90caf9; border-radius: 5px; font-size: 15px; width: 100%; box-sizing: border-box; }
+        .filter-group input:disabled { background: #e0e0e0; color: #777; cursor: not-allowed; border-color: #ccc; }
+
+        .btn-row { display: flex; justify-content: center; align-items: center; gap: 12px; width: 100%; margin-top: 10px;}
+        .filter-btn { background: #1565c0; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.2s; flex: 1; max-width: 140px;}
+        .filter-btn:hover { background: #0d47a1; }
+        .filter-btn:disabled { background: #ccc; cursor: not-allowed; }
+        .filter-btn.reset { background: #757575; }
+        .filter-btn.reset:hover { background: #555; }
+
+        .lock-icon { font-size: 24px; cursor: pointer; user-select: none; transition: transform 0.2s; line-height: 1; display: flex; align-items: center; justify-content: center;}
+        .lock-icon:hover { transform: scale(1.1); }
+
+        .counters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: nowrap; }
+        .counter-box { flex: 1; min-width: 0; padding: 10px 5px; border-radius: 8px; text-align: center; background: #e3f2fd; border: 2px solid #64b5f6; }
+        .counter-box.approved { background: #e8f5e9; border-color: #81c784; }
+        .counter-box.rejected { background: #ffebee; border-color: #ef9a9a; }
+        .counter-label { display: block; font-size: 10px; font-weight: bold; color: #555; margin-bottom: 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+        .counter-value { display: block; font-size: 20px; font-weight: bold; color: #1565c0; }
+        .counter-box.approved .counter-value { color: #2e7d32; }
+        .counter-box.rejected .counter-value { color: #c62828; }
+
+        .tabs { display: flex; width: 100%; margin-bottom: 0; border-radius: 8px 8px 0 0; overflow: hidden; border-bottom: 2px solid #e0e0e0; }
+        .tab-btn {
+            flex: 1; padding: 12px 2px; text-align: center; border: none; font-weight: bold;
+            cursor: pointer; font-size: clamp(10px, 3.2vw, 14px); transition: 0.2s;
+            display: flex; flex-direction: column; align-items: center; gap: 4px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            color: white; opacity: 0.7;
+        }
+        .tab-btn:hover { opacity: 1; }
+        .tab-btn.submit { background: linear-gradient(135deg, #1e88e5, #1565c0); }
+        .tab-btn.approved { background: linear-gradient(135deg, #43a047, #2e7d32); }
+        .tab-btn.rejected { background: linear-gradient(135deg, #e53935, #c62828); }
+        .tab-btn.active { opacity: 1; box-shadow: inset 0 -4px 0 rgba(0,0,0,0.2); transform: scale(1.02); z-index: 1; }
+
+        .list-section { border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; overflow: hidden; background: white; }
+        .report-list { max-height: 400px; overflow-y: auto; padding: 0; }
+
+        .report-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 10px; border-bottom: 1px solid #f0f0f0;
+            white-space: nowrap; font-size: clamp(11px, 3.5vw, 13px);
+        }
+        .report-item:last-child { border-bottom: none; }
+        .report-time { display: flex; align-items: center; gap: 4px; color: #555; font-weight: bold; overflow: hidden; text-overflow: ellipsis; margin-right: 8px;}
+        .report-status { font-weight: bold; flex-shrink: 0; font-size: clamp(10px, 3vw, 12px);}
+        .report-status.success { color: #2e7d32; }
+        .report-status.error { color: #c62828; }
+        .report-status.info { color: #1565c0; }
+
+        .empty-msg { padding: 30px; text-align: center; color: #999; font-style: italic; font-size: 14px; }
+        .count-badge { background: #ff9800; color: white; padding: 1px 5px; border-radius: 10px; font-size: 10px; font-weight: bold; margin-left: 4px; }
     </style>
 </head>
 <body>
@@ -287,10 +396,104 @@ HTML_PAGE = '''
         </div>
     </div>
 
+    <div class="report-area">
+        <h4>📊 Report Analytics</h4>
+
+        <div class="filter-area">
+            <div class="filter-group">
+                <label>From:</label>
+                <input type="datetime-local" id="fromDate">
+            </div>
+            <div class="filter-group">
+                <label>To:</label>
+                <input type="datetime-local" id="toDate">
+            </div>
+            <div class="btn-row">
+                <button class="filter-btn" id="btnFilter" onclick="fetchReports(event)">🔍 Filter</button>
+                <button class="filter-btn reset" onclick="resetFilter()">↺ Reset</button>
+                <span class="lock-icon" id="lockIcon" onclick="toggleLock()" title="Lock Date/Time">🔓</span>
+            </div>
+        </div>
+
+        <div class="counters">
+            <div class="counter-box">
+                <span class="counter-label">Total Submit</span>
+                <span class="counter-value" id="cntSubmit">0</span>
+            </div>
+            <div class="counter-box approved">
+                <span class="counter-label">Approved</span>
+                <span class="counter-value" id="cntApproved">0</span>
+            </div>
+            <div class="counter-box rejected">
+                <span class="counter-label">Rejected</span>
+                <span class="counter-value" id="cntRejected">0</span>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn submit active" id="tabBtn-submit" onclick="switchTab('submit')">📥<br>Submit</button>
+            <button class="tab-btn approved" id="tabBtn-approved" onclick="switchTab('approved')">✅<br>Approved</button>
+            <button class="tab-btn rejected" id="tabBtn-rejected" onclick="switchTab('rejected')">❌<br>Rejected</button>
+        </div>
+
+        <div class="list-section">
+            <div id="tabContent-submit" class="report-list" style="display: block;">
+                <div class="empty-msg">Loading data...</div>
+            </div>
+            <div id="tabContent-approved" class="report-list" style="display: none;">
+                <div class="empty-msg">Loading data...</div>
+            </div>
+            <div id="tabContent-rejected" class="report-list" style="display: none;">
+                <div class="empty-msg">Loading data...</div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let lastLoginVal = "Welcome";
+        let autoRefreshTimer = null;
+        let isFetchingReports = false;
+        let isLocked = false;
         let isManualSubmitting = false;
         let polling = false;
+
+        function initLock() {
+            isLocked = localStorage.getItem('dateFilterLocked') === 'true';
+            updateLockUI();
+            if (isLocked) {
+                const savedFrom = localStorage.getItem('savedFromDate');
+                const savedTo = localStorage.getItem('savedToDate');
+                if (savedFrom) document.getElementById('fromDate').value = savedFrom;
+                if (savedTo) document.getElementById('toDate').value = savedTo;
+            }
+        }
+
+        function toggleLock() {
+            isLocked = !isLocked;
+            localStorage.setItem('dateFilterLocked', isLocked);
+            if (isLocked) {
+                localStorage.setItem('savedFromDate', document.getElementById('fromDate').value);
+                localStorage.setItem('savedToDate', document.getElementById('toDate').value);
+            }
+            updateLockUI();
+        }
+
+        function updateLockUI() {
+            const lockIcon = document.getElementById('lockIcon');
+            const fromInput = document.getElementById('fromDate');
+            const toInput = document.getElementById('toDate');
+            if (isLocked) {
+                lockIcon.innerText = '🔒';
+                lockIcon.style.color = '#d32f2f';
+                fromInput.disabled = true;
+                toInput.disabled = true;
+            } else {
+                lockIcon.innerText = '🔓';
+                lockIcon.style.color = '#2e7d32';
+                fromInput.disabled = false;
+                toInput.disabled = false;
+            }
+        }
 
         async function fetchLogin() {
             if (polling) return;
@@ -324,7 +527,6 @@ HTML_PAGE = '''
                         display.style.display = 'block';
                         display.innerText = lastLoginVal;
                         display.title = lastLoginVal;
-
                         if (lastLoginVal.includes("Successful") || lastLoginVal.includes("Done") || lastLoginVal.includes("✅")) {
                             display.classList.add('success-text');
                         } else {
@@ -341,7 +543,6 @@ HTML_PAGE = '''
         function copyToClipboard() {
             let text = document.getElementById('loginDisplay').innerText;
             if (text === "" || text.includes("Report") || text.includes("Successful") || text.includes("Welcome")) return;
-
             navigator.clipboard.writeText(text).then(() => {
                 const copyMsg = document.getElementById('copyMsg');
                 copyMsg.style.display = 'block';
@@ -369,7 +570,6 @@ HTML_PAGE = '''
                 const item = buttons[i];
                 await sendSpecific(item.id, item.btnId, item.isStart);
                 btnAll2FA.innerText = `Processing... ${item.percent}%`;
-
                 if (i < buttons.length - 1) {
                     await new Promise(r => setTimeout(r, 300));
                 }
@@ -465,129 +665,11 @@ HTML_PAGE = '''
                 try { await fetch('/reset_welcome', { method: 'POST' }); } catch(e) {}
             }, 5000);
         }
-    </script>
-</body>
-</html>
-'''
 
-# ==========================================
-# Routes
-# ==========================================
-@app.route('/')
-def index():
-    return render_template_string(HTML_PAGE)
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
 
-@app.route('/get_login')
-def get_login():
-    global latest_message
-    return jsonify({"login": latest_message})
-
-@app.route('/reset_welcome', methods=['POST'])
-def reset_welcome():
-    global latest_message
-    latest_message = "Welcome"
-    return jsonify({'status': 'ok'})
-
-@app.route('/click_button_by_text', methods=['POST'])
-def click_button_by_text():
-    global latest_message, is_username_shown, is_waiting_for_report
-    data = request.get_json()
-    btn_text = data.get('btn_text', '')
-    is_start = data.get('is_start', False)
-
-    latest_message = "Loading..."
-    is_username_shown = False
-    is_waiting_for_report = False
-
-    async def action():
-        try:
-            if is_start:
-                await client.send_message(TARGET_BOT, "/start")
-                await asyncio.sleep(0.7)
-            result = await find_and_click_button(btn_text)
-            await asyncio.sleep(0.7)
-            return result
-        except Exception:
-            return False
-
-    result = run_async(action(), timeout=20)
-
-    if result == "already_clicked":
-        return jsonify({'status': 'error', 'msg': 'এই বাটনে আগেই ক্লিক করা হয়েছে!'})
-    elif result:
-        return jsonify({'status': 'ok'})
-    else:
-        # ✅ Hang হলে loader আটকে না থাকার জন্য welcome এ ফেরত
-        if latest_message == "Loading...":
-            latest_message = "Welcome"
-        return jsonify({'status': 'error', 'msg': 'বাটনটি পাওয়া যায়নি!'})
-
-@app.route('/send_manual_msg', methods=['POST'])
-def send_manual_msg():
-    global latest_message
-    data = request.get_json()
-    text = data.get('text', '')
-    if not text:
-        return jsonify({'status': 'error'})
-
-    latest_message = "Loading..."
-
-    async def send_action():
-        try:
-            await client.send_message(TARGET_BOT, text)
-            return True
-        except Exception:
-            return False
-
-    success = run_async(send_action(), timeout=20)
-    if not success and latest_message == "Loading...":
-        latest_message = "Welcome"
-    return jsonify({'status': 'ok' if success else 'error'})
-
-@app.route('/send_manual_registered', methods=['POST'])
-def send_manual_registered():
-    global is_waiting_for_report, is_username_shown
-    is_waiting_for_report = True
-    is_username_shown = True
-
-    async def send_action():
-        try:
-            await client.send_message(TARGET_BOT, "✅ Account registered")
-            await asyncio.sleep(2)
-            await client.send_message(TARGET_BOT, "✅ Yes, I made 5+ subscriptions")
-            return True
-        except Exception:
-            return False
-
-    success = run_async(send_action(), timeout=20)
-    return jsonify({'status': 'ok' if success else 'error'})
-
-@app.route('/send_2fa', methods=['POST'])
-def send_2fa():
-    async def send_action():
-        try:
-            await client.send_message(TARGET_BOT, "BQQ6 SYLR NRVW 5DWH")
-            return True
-        except Exception:
-            return False
-
-    success = run_async(send_action(), timeout=20)
-    return jsonify({'status': 'ok' if success else 'error'})
-
-# ==========================================
-# Main
-# ==========================================
-if __name__ == '__main__':
-    print("Connecting..")
-    start_loop()   # background event loop চালু
-
-    async def _connect():
-        await client.connect()
-        if not await client.is_user_authorized():
-            raise Exception("Session invalid!")
-
-    run_async(_connect(), timeout=30)
-    print("Success! Website running...")
-
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True, use_reloader=False)
+        function formatDate(isoString) {
+            const d = new Date(isoString);
+            const day = String(d.getDate()).padStart(2
