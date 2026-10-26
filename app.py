@@ -495,4 +495,305 @@ HTML_PAGE = '''
         async function fetchReports(event) {
             if (isFetchingReports) return;
             isFetchingReports = true;
-            const btn = document
+            const btn = document.getElementById('btnFilter');
+            if (event && event.type === 'click') {
+                btn.disabled = true;
+                btn.innerText = "Loading...";
+            }
+            const fromVal = document.getElementById('fromDate').value;
+            const toVal = document.getElementById('toDate').value;
+            const start = fromVal ? new Date(fromVal).toISOString() : null;
+            const end = toVal ? new Date(toVal).toISOString() : null;
+            try {
+                const res = await fetch('/get_reports', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ start: start, end: end })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    console.error("Error: " + data.error);
+                    return;
+                }
+                document.getElementById('cntSubmit').innerText = data.total_submit;
+                document.getElementById('cntApproved').innerText = data.approved;
+                document.getElementById('cntRejected').innerText = data.rejected;
+                renderTabList('tabContent-submit', data.submit_list, 'submit');
+                renderTabList('tabContent-approved', data.approved_list, 'approved');
+                renderTabList('tabContent-rejected', data.rejected_list, 'rejected');
+            } catch (e) {
+                console.error("Failed: " + e.message);
+            } finally {
+                isFetchingReports = false;
+                if (event && event.type === 'click') {
+                    btn.disabled = false;
+                    btn.innerText = "🔍 Filter";
+                }
+            }
+        }
+
+        function renderTabList(id, items, type) {
+            const container = document.getElementById(id);
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="empty-msg">No data found in this time range</div>';
+                return;
+            }
+            let icon = "📥";
+            let text = "Report Submitted";
+            let className = "info";
+            if (type === 'approved') {
+                icon = "✅";
+                text = "Report Verified";
+                className = "success";
+            } else if (type === 'rejected') {
+                icon = "❌";
+                text = "Report Rejected";
+                className = "error";
+            }
+            container.innerHTML = items.map(item => {
+                const localTime = formatDate(item.time);
+                const badge = item.count > 1 ? `<span class="count-badge">×${item.count}</span>` : '';
+                return `<div class="report-item">
+                    <div class="report-time">🕐 ${escapeHtml(localTime)} ${badge}</div>
+                    <div class="report-status ${className}">${icon} ${text}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function switchTab(tabName) {
+            document.getElementById('tabContent-submit').style.display = 'none';
+            document.getElementById('tabContent-approved').style.display = 'none';
+            document.getElementById('tabContent-rejected').style.display = 'none';
+            document.getElementById('tabBtn-submit').classList.remove('active');
+            document.getElementById('tabBtn-approved').classList.remove('active');
+            document.getElementById('tabBtn-rejected').classList.remove('active');
+            document.getElementById('tabContent-' + tabName).style.display = 'block';
+            document.getElementById('tabBtn-' + tabName).classList.add('active');
+        }
+
+        function resetFilter() {
+            document.getElementById('fromDate').value = '';
+            document.getElementById('toDate').value = '';
+            if (isLocked) {
+                localStorage.removeItem('savedFromDate');
+                localStorage.removeItem('savedToDate');
+            }
+            fetchReports();
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initLock();
+            fetchReports(null); 
+            autoRefreshTimer = setInterval(() => fetchReports(null), 10000); 
+        });
+    </script>
+</body>
+</html>
+'''
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
+
+@app.route('/get_login')
+def get_login():
+    global latest_message
+    return jsonify({"login": latest_message})
+
+@app.route('/reset_welcome', methods=['POST'])
+def reset_welcome():
+    global latest_message
+    latest_message = "Welcome"
+    return jsonify({'status': 'ok'})
+
+# ==========================================
+# Threading দিয়ে ফিক্স করা রুটগুলো
+# ==========================================
+@app.route('/get_reports', methods=['POST'])
+def get_reports():
+    data = request.get_json() or {}
+    start_str = data.get('start')
+    end_str = data.get('end')
+
+    def parse_dt(s):
+        if not s: return None
+        try:
+            dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+            if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    start_dt = parse_dt(start_str)
+    end_dt = parse_dt(end_str)
+
+    def fetch_data_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def run():
+            await sync_reports_from_telegram()
+            result = {'total_submit': 0, 'approved': 0, 'rejected': 0, 'submit_list': [], 'approved_list': [], 'rejected_list': []}
+            for item in report_cache:
+                mdate = item['date']
+                if mdate.tzinfo is None: mdate = mdate.replace(tzinfo=timezone.utc)
+                else: mdate = mdate.astimezone(timezone.utc)
+                if start_dt is not None and mdate < start_dt: continue
+                if end_dt is not None and mdate > end_dt: continue
+                iso_time = mdate.isoformat()
+                if item['ds_cnt'] > 0:
+                    result['total_submit'] += item['ds_cnt']
+                    result['submit_list'].append({'time': iso_time, 'count': item['ds_cnt']})
+                if item['ap_cnt'] > 0:
+                    result['approved'] += item['ap_cnt']
+                    result['approved_list'].append({'time': iso_time, 'count': item['ap_cnt']})
+                if item['rj_cnt'] > 0:
+                    result['rejected'] += item['rj_cnt']
+                    result['rejected_list'].append({'time': iso_time, 'count': item['rj_cnt']})
+            return result
+
+        try:
+            res_data = loop.run_until_complete(run())
+        except Exception as e:
+            res_data = {'error': str(e)}
+        finally:
+            loop.close()
+        return res_data
+
+    # থ্রেডে রান করে ডেটা নেওয়া হচ্ছে
+    result_container = []
+    t = threading.Thread(target=lambda: result_container.append(fetch_data_thread()))
+    t.start()
+    t.join()
+
+    if result_container and 'error' in result_container[0]:
+        return jsonify({'error': result_container[0]['error']}), 500
+    return jsonify(result_container[0])
+
+@app.route('/click_button_by_text', methods=['POST'])
+def click_button_by_text():
+    global latest_message, is_username_shown, is_waiting_for_report
+    data = request.get_json()
+    btn_text = data.get('btn_text', '')
+    is_start = data.get('is_start', False)
+
+    latest_message = "Loading..."
+    is_username_shown = False
+    is_waiting_for_report = False
+
+    def action_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def run():
+            try:
+                if is_start:
+                    await client.send_message(TARGET_BOT, "/start")
+                    await asyncio.sleep(0.7)
+                await find_and_click_button(btn_text)
+                await asyncio.sleep(0.7)
+            except Exception:
+                pass
+        loop.run_until_complete(run())
+        loop.close()
+
+    t = threading.Thread(target=action_thread)
+    t.start()
+    t.join()
+
+    return jsonify({'status': 'ok'})
+
+@app.route('/send_manual_msg', methods=['POST'])
+def send_manual_msg():
+    global latest_message
+    data = request.get_json()
+    text = data.get('text', '')
+    if not text: return jsonify({'status': 'error'})
+
+    latest_message = "Loading..."
+
+    def action_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def run():
+            try:
+                await client.send_message(TARGET_BOT, text)
+            except Exception:
+                pass
+        loop.run_until_complete(run())
+        loop.close()
+
+    t = threading.Thread(target=action_thread)
+    t.start()
+    t.join()
+
+    return jsonify({'status': 'ok'})
+
+@app.route('/send_manual_registered', methods=['POST'])
+def send_manual_registered():
+    global is_waiting_for_report, is_username_shown
+    is_waiting_for_report = True
+    is_username_shown = True
+
+    def action_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def run():
+            try:
+                await client.send_message(TARGET_BOT, "✅ Account registered")
+                await asyncio.sleep(2)
+                await client.send_message(TARGET_BOT, "✅ Yes, I made 5+ subscriptions")
+            except Exception:
+                pass
+        loop.run_until_complete(run())
+        loop.close()
+
+    t = threading.Thread(target=action_thread)
+    t.start()
+    t.join()
+
+    return jsonify({'status': 'ok'})
+
+@app.route('/send_2fa', methods=['POST'])
+def send_2fa():
+    def action_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def run():
+            try:
+                await client.send_message(TARGET_BOT, "BQQ6 SYLR NRVW 5DWH")
+            except Exception:
+                pass
+        loop.run_until_complete(run())
+        loop.close()
+
+    t = threading.Thread(target=action_thread)
+    t.start()
+    t.join()
+
+    return jsonify({'status': 'ok'})
+
+# ==========================================
+# Startup Logic (Termux + Render)
+# ==========================================
+def start_telegram_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(client.connect())
+        if not loop.run_until_complete(client.is_user_authorized()):
+            print("❌ Session not authorized!")
+        else:
+            print("✅ Telegram Connected Successfully!")
+    except Exception as e:
+        print("❌ Connection Error:", e)
+    
+    loop.run_until_complete(client.run_until_disconnected())
+
+if __name__ == '__main__':
+    print("Connecting..")
+    t = threading.Thread(target=start_telegram_bot, daemon=True)
+    t.start()
+    time.sleep(3)
+    print("✅ Website running...")
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True, use_reloader=False)
